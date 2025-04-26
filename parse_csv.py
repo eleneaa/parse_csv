@@ -4,10 +4,6 @@ import requests
 
 
 def clean_salaries(df):
-    """Обработка зарплат:
-    - Если есть только salary_from или salary_to - используем его как среднее
-    - Пропускаем только если оба значения NaN
-    """
     # Создаем копию, чтобы избежать SettingWithCopyWarning
     df = df.copy()
 
@@ -22,7 +18,6 @@ def clean_salaries(df):
 
 
 def get_currency_rates():
-    """Получает актуальные курсы валют от ЦБ РФ"""
     try:
         response = requests.get('https://www.cbr-xml-daily.ru/daily_json.js')
         data = response.json()
@@ -55,10 +50,10 @@ def calculate_salary(row, currency_rates):
 
 def plot_top_cities_by_year(df, top_n=10):
     """Топ городов по количеству вакансий для каждого года"""
-    years = sorted(df['year'].unique())
+    years = sorted(df['published_at'].unique())
 
     for year in years:
-        year_data = df[df['year'] == year]
+        year_data = df[df['published_at'] == year]
         if len(year_data) == 0:
             continue
 
@@ -83,16 +78,17 @@ def plot_salaries(df):
     plt.figure(figsize=(12, 6))
 
     # Средняя зарплата по годам
-    salary_by_year = df.groupby('year')['salary'].mean()
+    salary_by_year = df.groupby('published_at')['salary'].mean()
     salary_by_year.plot(kind='line', marker='o', label='Средняя зарплата')
 
     # Медианная зарплата по годам
-    median_by_year = df.groupby('year')['salary'].median()
+    median_by_year = df.groupby('published_at')['salary'].median()
     median_by_year.plot(kind='line', marker='o', label='Медианная зарплата')
 
     plt.title('Динамика зарплат по годам', pad=20)
     plt.xlabel('Год')
     plt.ylabel('Зарплата (руб)')
+    
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -105,7 +101,7 @@ def plot_skills(df, top_n=15):
     skills = (
         df['key_skills']
         .str.lower()
-        .str.split(r',\s*|\s*и\s*|\s*/\s*', regex=True)  # Разделители: запятые, "и", слэши
+        .str.split(r',\s*|[\n]|\s*/\s*', regex=True)  # Разделители: запятые, "и", слэши
         .explode()
         .str.strip()
         .value_counts()
@@ -124,14 +120,14 @@ def plot_skills(df, top_n=15):
 def analyze_vacancies(filename, keywords):
     """Основная функция анализа"""
     try:
-        df = pd.read_csv(filename, parse_dates=['published_at'])
+        df = pd.read_csv(filename)
     except Exception as e:
         print(f"Ошибка чтения файла: {e}")
         return
 
     # Очистка и обработка данных
     df = clean_salaries(df)
-    df = df.dropna(subset=['area_name', 'name'])  # Обязательные поля
+    df = df.dropna(subset=['name'])  # Обязательные поля
 
     # Фильтрация по профессии
     pattern = '|'.join(keywords)
@@ -141,20 +137,25 @@ def analyze_vacancies(filename, keywords):
         print("Нет вакансий, соответствующих критериям")
         return
 
-    # Добавляем расчетные поля
-    filtered['year'] = filtered['published_at'].dt.year
+    currency_rates = get_currency_rates()
+
     filtered['salary'] = filtered.apply(
-        lambda row: calculate_salary(row, get_currency_rates()),
+        lambda row: calculate_salary(row, currency_rates),
+        axis=1
+    ).dropna()
+
+    filtered['published_at'] = filtered.apply(
+        lambda row: int(row['published_at'][0:4]),
         axis=1
     ).dropna()
 
     # Анализ
-    print(f"Найдено {len(filtered)} вакансий за период {filtered['year'].min()}-{filtered['year'].max()}")
+    print(f"Найдено {len(filtered)} вакансий за период {filtered['published_at'].min()}-{filtered['published_at'].max()}")
     print(f"Средняя зарплата: {filtered['salary'].mean():.2f} руб")
     print(f"Медианная зарплата: {filtered['salary'].median():.2f} руб")
 
     # Визуализация
-    plot_top_cities_by_year(filtered)
+    #plot_top_cities_by_year(filtered)
     plot_salaries(filtered)
     plot_skills(filtered)
 
